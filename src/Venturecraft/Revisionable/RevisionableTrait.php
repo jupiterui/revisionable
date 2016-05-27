@@ -1,11 +1,11 @@
 <?php namespace Venturecraft\Revisionable;
 
-/*
- * This file is part of the Revisionable package by Venture Craft
- *
- * (c) Venture Craft <http://www.venturecraft.com.au>
- *
- */
+    /*
+     * This file is part of the Revisionable package by Venture Craft
+     *
+     * (c) Venture Craft <http://www.venturecraft.com.au>
+     *
+     */
 
 /**
  * Class RevisionableTrait
@@ -107,10 +107,10 @@ trait RevisionableTrait
     }
 
     /**
-    * Invoked before a model is saved. Return false to abort the operation.
-    *
-    * @return bool
-    */
+     * Invoked before a model is saved. Return false to abort the operation.
+     *
+     * @return bool
+     */
     public function preSave()
     {
         if (!isset($this->revisionEnabled) || $this->revisionEnabled) {
@@ -187,13 +187,14 @@ trait RevisionableTrait
                 );
             }
 
-            if (count($revisions) > 0) {
-                if($LimitReached && $RevisionCleanup){
-                    $toDelete = $this->revisionHistory()->orderBy('id','asc')->limit(count($revisions))->get();
-                    foreach($toDelete as $delete){
-                        $delete->delete();
-                    }
+            if($LimitReached && $RevisionCleanup){
+                $toDelete = $this->revisionHistory()->orderBy('id','asc')->limit($this->revisionHistory->count() - $this->historyLimit)->get();
+                foreach($toDelete as $delete){
+                    $delete->delete();
                 }
+            }
+
+            if (count($revisions) > 0) {
                 $revision = new Revision;
                 \DB::table($revision->getTable())->insert($revisions);
             }
@@ -201,8 +202,8 @@ trait RevisionableTrait
     }
 
     /**
-    * Called after record successfully created
-    */
+     * Called after record successfully created
+     */
     public function postCreate()
     {
 
