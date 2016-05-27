@@ -434,4 +434,14 @@ trait RevisionableTrait
             unset($donts);
         }
     }
+
+    public function getDirtyData()
+    {
+        return $this->dirtyData;
+    }
+
+    public function hasDirtyData()
+    {
+        return !empty($this->dirtyData);
+    }
 }
