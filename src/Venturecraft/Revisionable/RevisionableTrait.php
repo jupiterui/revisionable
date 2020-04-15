@@ -1,5 +1,7 @@
 <?php namespace Venturecraft\Revisionable;
 
+use Illuminate\Support\Arr;
+
 /*
  * This file is part of the Revisionable package by Venture Craft
  *
@@ -75,7 +77,7 @@ trait RevisionableTrait
             $model->postSave();
         });
 
-        static::created(function($model){
+        static::created(function ($model) {
             $model->postCreate();
         });
 
@@ -90,7 +92,7 @@ trait RevisionableTrait
      */
     public function revisionHistory()
     {
-        return $this->morphMany('\Venturecraft\Revisionable\Revision', 'revisionable');
+        return $this->morphMany(get_class(Revisionable::newModel()), 'revisionable');
     }
 
     /**
@@ -102,7 +104,8 @@ trait RevisionableTrait
      */
     public static function classRevisionHistory($limit = 100, $order = 'desc')
     {
-        return \Venturecraft\Revisionable\Revision::where('revisionable_type', get_called_class())
+        $model = Revisionable::newModel();
+        return $model->where('revisionable_type', get_called_class())
             ->orderBy('updated_at', $order)->limit($limit)->get();
     }
 
@@ -122,7 +125,15 @@ trait RevisionableTrait
             // we can only safely compare basic items,
             // so for now we drop any object based items, like DateTime
             foreach ($this->updatedData as $key => $val) {
-                if (gettype($val) == 'object' && !method_exists($val, '__toString')) {
+                if (isset($this->casts[$key]) && in_array($this->casts[$key], ['object', 'array']) && isset($this->originalData[$key])) {
+                    // Sorts the keys of a JSON object due Normalization performed by MySQL
+                    // So it doesn't set false flag if it is changed only order of key or whitespace after comma
+
+                    $updatedData = $this->sortJsonKeys(json_decode($this->updatedData[$key], true));
+
+                    $this->updatedData[$key] = json_encode($updatedData);
+                    $this->originalData[$key] = json_encode(json_decode($this->originalData[$key], true));
+                } else if (gettype($val) == 'object' && !method_exists($val, '__toString')) {
                     unset($this->originalData[$key]);
                     unset($this->updatedData[$key]);
                     array_push($this->dontKeep, $key);
@@ -132,11 +143,11 @@ trait RevisionableTrait
             // the below is ugly, for sure, but it's required so we can save the standard model
             // then use the keep / dontkeep values for later, in the isRevisionable method
             $this->dontKeep = isset($this->dontKeepRevisionOf) ?
-                $this->dontKeepRevisionOf + $this->dontKeep
+                array_merge($this->dontKeepRevisionOf, $this->dontKeep)
                 : $this->dontKeep;
 
             $this->doKeep = isset($this->keepRevisionOf) ?
-                $this->keepRevisionOf + $this->doKeep
+                array_merge($this->keepRevisionOf, $this->doKeep)
                 : $this->doKeep;
 
             unset($this->attributes['dontKeepRevisionOf']);
@@ -176,12 +187,12 @@ trait RevisionableTrait
 
             foreach ($changes_to_record as $key => $change) {
                 $revisions[] = array(
-                    'revisionable_type' => get_class($this),
+                    'revisionable_type' => $this->getMorphClass(),
                     'revisionable_id' => $this->getKey(),
                     'key' => $key,
-                    'old_value' => array_get($this->originalData, $key),
+                    'old_value' => Arr::get($this->originalData, $key),
                     'new_value' => $this->updatedData[$key],
-                    'user_id' => $this->getUserId(),
+                    'user_id' => $this->getSystemUserId(),
                     'created_at' => new \DateTime(),
                     'updated_at' => new \DateTime(),
                 );
@@ -194,9 +205,9 @@ trait RevisionableTrait
                         $delete->delete();
                     }
                 }
-                $revision = new Revision;
+                $revision = Revisionable::newModel();
                 \DB::table($revision->getTable())->insert($revisions);
-                \Event::fire('revisionable.saved', array('model' => $this, 'revisions' => $revisions));
+                \Event::dispatch('revisionable.saved', array('model' => $this, 'revisions' => $revisions));
             }
         }
     }
@@ -218,19 +229,19 @@ trait RevisionableTrait
         if ((!isset($this->revisionEnabled) || $this->revisionEnabled))
         {
             $revisions[] = array(
-                'revisionable_type' => get_class($this),
+                'revisionable_type' => $this->getMorphClass(),
                 'revisionable_id' => $this->getKey(),
-                'key' => 'created_at',
+                'key' => self::CREATED_AT,
                 'old_value' => null,
-                'new_value' => $this->created_at,
-                'user_id' => $this->getUserId(),
+                'new_value' => $this->{self::CREATED_AT},
+                'user_id' => $this->getSystemUserId(),
                 'created_at' => new \DateTime(),
                 'updated_at' => new \DateTime(),
             );
 
-            $revision = new Revision;
+            $revision = Revisionable::newModel();
             \DB::table($revision->getTable())->insert($revisions);
-            \Event::fire('revisionable.created', array('model' => $this, 'revisions' => $revisions));
+            \Event::dispatch('revisionable.created', array('model' => $this, 'revisions' => $revisions));
         }
 
     }
@@ -242,21 +253,21 @@ trait RevisionableTrait
     {
         if ((!isset($this->revisionEnabled) || $this->revisionEnabled)
             && $this->isSoftDelete()
-            && $this->isRevisionable('deleted_at')
+            && $this->isRevisionable($this->getDeletedAtColumn())
         ) {
             $revisions[] = array(
-                'revisionable_type' => get_class($this),
+                'revisionable_type' => $this->getMorphClass(),
                 'revisionable_id' => $this->getKey(),
-                'key' => 'deleted_at',
+                'key' => $this->getDeletedAtColumn(),
                 'old_value' => null,
-                'new_value' => $this->deleted_at,
-                'user_id' => $this->getUserId(),
+                'new_value' => $this->{$this->getDeletedAtColumn()},
+                'user_id' => $this->getSystemUserId(),
                 'created_at' => new \DateTime(),
                 'updated_at' => new \DateTime(),
             );
-            $revision = new \Venturecraft\Revisionable\Revision;
+            $revision = Revisionable::newModel();
             \DB::table($revision->getTable())->insert($revisions);
-            \Event::fire('revisionable.deleted', array('model' => $this, 'revisions' => $revisions));
+            \Event::dispatch('revisionable.deleted', array('model' => $this, 'revisions' => $revisions));
         }
     }
 
@@ -264,7 +275,7 @@ trait RevisionableTrait
      * Attempt to find the user id of the currently logged in user
      * Supports Cartalyst Sentry/Sentinel based authentication, as well as stock Auth
      **/
-    public function getUserId()
+    public function getSystemUserId()
     {
         try {
             if (class_exists($class = '\SleepingOwl\AdminAuth\Facades\AdminAuth')
@@ -295,7 +306,7 @@ trait RevisionableTrait
             // check that the field is revisionable, and double check
             // that it's actually new data in case dirty is, well, clean
             if ($this->isRevisionable($key) && !is_array($value)) {
-                if (!isset($this->originalData[$key]) || $this->originalData[$key] != $this->updatedData[$key]) {
+                if (!array_key_exists($key, $this->originalData) || $this->originalData[$key] != $this->updatedData[$key]) {
                     $changes_to_record[$key] = $value;
                 }
             } else {
@@ -434,5 +445,45 @@ trait RevisionableTrait
             $this->dontKeepRevisionOf = $donts;
             unset($donts);
         }
+    }
+
+    /**
+     * Sorts the keys of a JSON object
+     *
+     * Normalization performed by MySQL and
+     * discards extra whitespace between keys, values, or elements
+     * in the original JSON document.
+     * To make lookups more efficient, it sorts the keys of a JSON object.
+     *
+     * @param mixed $attribute
+     *
+     * @return mixed
+     */
+    private function sortJsonKeys($attribute)
+    {
+        if(empty($attribute)) return $attribute;
+
+        foreach ($attribute as $key=>$value) {
+            if(is_array($value) || is_object($value)){
+                $value = $this->sortJsonKeys($value);
+            } else {
+                continue;
+            }
+
+            ksort($value);
+            $attribute[$key] = $value;
+        }
+
+        return $attribute;
+    }
+
+    public function getDirtyData()
+    {
+        return $this->dirtyData;
+    }
+
+    public function hasDirtyData()
+    {
+        return !empty($this->dirtyData);
     }
 }
